@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, value::RawValue};
+use serde_json::Value;
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
@@ -70,14 +70,29 @@ impl Model {
         self.max_tokens
     }
 }
+
+#[derive(Clone, Deserialize, Serialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolDefinition {
+    #[allow(dead_code)]
+    Function { function: FunctionDefinition },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FunctionDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Option<Value>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
     Assistant {
         #[serde(default)]
         content: Option<String>,
-        #[serde(default)]
-        tool_calls: Option<Vec<LmStudioToolCall>>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolCall>,
     },
     User {
         content: String,
@@ -85,31 +100,29 @@ pub enum ChatMessage {
     System {
         content: String,
     },
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum LmStudioToolCall {
-    Function(LmStudioFunctionCall),
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LmStudioFunctionCall {
-    pub name: String,
-    pub arguments: Box<RawValue>,
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct LmStudioFunctionTool {
-    pub name: String,
-    pub description: Option<String>,
-    pub parameters: Option<Value>,
+pub struct ToolCall {
+    pub id: String,
+    #[serde(flatten)]
+    pub content: ToolCallContent,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum LmStudioTool {
-    Function { function: LmStudioFunctionTool },
+pub enum ToolCallContent {
+    Function { function: FunctionContent },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionContent {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Serialize, Debug)]
@@ -117,10 +130,14 @@ pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<ChatMessage>,
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
-    pub tools: Vec<LmStudioTool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDefinition>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -135,8 +152,7 @@ pub struct ChatResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
     pub index: u32,
-    #[serde(default)]
-    pub delta: serde_json::Value,
+    pub delta: ResponseMessageDelta,
     pub finish_reason: Option<String>,
 }
 
@@ -175,6 +191,7 @@ pub enum ResponseStreamResult {
 pub struct ResponseStreamEvent {
     pub created: u32,
     pub model: String,
+    pub object: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
 }
@@ -265,7 +282,7 @@ pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
     request: ChatCompletionRequest,
-) -> Result<BoxStream<'static, Result<ChatResponse>>> {
+) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
     let request_builder = http::Request::builder()
         .method(Method::POST)
