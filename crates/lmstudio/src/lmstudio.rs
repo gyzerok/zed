@@ -41,33 +41,107 @@ impl From<Role> for String {
     }
 }
 
+// #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+// #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+// pub struct Model {
+//     pub name: String,
+//     pub display_name: Option<String>,
+//     pub max_tokens: usize,
+// }
+
+// impl Model {
+//     pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>) -> Self {
+//         Self {
+//             name: name.to_owned(),
+//             display_name: display_name.map(|s| s.to_owned()),
+//             max_tokens: max_tokens.unwrap_or(2048),
+//         }
+//     }
+
+//     pub fn id(&self) -> &str {
+//         &self.name
+//     }
+
+//     pub fn display_name(&self) -> &str {
+//         self.display_name.as_ref().unwrap_or(&self.name)
+//     }
+
+//     pub fn max_token_count(&self) -> usize {
+//         self.max_tokens
+//     }
+// }
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Model {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: usize,
+    pub id: String,
+    pub object: String,
+    pub r#type: ModelType,
+    pub publisher: String,
+    pub arch: Option<String>,
+    pub compatibility_type: CompatibilityType,
+    pub quantization: Option<String>,
+    pub state: ModelState,
+    pub max_context_length: Option<u32>,
+    pub loaded_context_length: Option<u32>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelType {
+    Llm,
+    Embeddings,
+    Vlm,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModelState {
+    #[default]
+    NotLoaded,
+    Loading,
+    Loaded,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CompatibilityType {
+    Gguf,
+    Mlx,
 }
 
 impl Model {
-    pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>) -> Self {
+    pub fn from_id(id: &str) -> Self {
         Self {
-            name: name.to_owned(),
-            display_name: display_name.map(|s| s.to_owned()),
-            max_tokens: max_tokens.unwrap_or(2048),
+            id: id.into(),
+            object: "model".into(),
+            r#type: ModelType::Llm,
+            publisher: "unknown".into(),
+            arch: None,
+            compatibility_type: CompatibilityType::Gguf,
+            quantization: None,
+            state: ModelState::NotLoaded,
+            max_context_length: None,
+            loaded_context_length: None,
         }
     }
 
     pub fn id(&self) -> &str {
-        &self.name
+        self.id.as_ref()
+    }
+
+    pub fn name(&self) -> &str {
+        self.id.as_ref()
     }
 
     pub fn display_name(&self) -> &str {
-        self.display_name.as_ref().unwrap_or(&self.name)
+        self.id.as_ref()
     }
 
     pub fn max_token_count(&self) -> usize {
-        self.max_tokens
+        2048
     }
 }
 
@@ -198,44 +272,7 @@ pub struct ResponseStreamEvent {
 
 #[derive(Serialize, Deserialize)]
 pub struct ListModelsResponse {
-    pub data: Vec<ModelEntry>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ModelEntry {
-    pub id: String,
-    pub object: String,
-    pub r#type: ModelType,
-    pub publisher: String,
-    pub arch: Option<String>,
-    pub compatibility_type: CompatibilityType,
-    pub quantization: Option<String>,
-    pub state: ModelState,
-    pub max_context_length: Option<u32>,
-    pub loaded_context_length: Option<u32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ModelType {
-    Llm,
-    Embeddings,
-    Vlm,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum ModelState {
-    Loaded,
-    Loading,
-    NotLoaded,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum CompatibilityType {
-    Gguf,
-    Mlx,
+    pub data: Vec<Model>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -334,7 +371,7 @@ pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
     _: Option<Duration>,
-) -> Result<Vec<ModelEntry>> {
+) -> Result<Vec<Model>> {
     let uri = format!("{api_url}/models");
     let request_builder = HttpRequest::builder()
         .method(Method::GET)

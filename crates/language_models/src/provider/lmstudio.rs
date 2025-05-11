@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
@@ -50,6 +50,8 @@ pub struct AvailableModel {
     pub display_name: Option<String>,
     /// The model's context window size.
     pub max_tokens: usize,
+    /// State of the model on the LM Studio server.
+    pub loading_state: String,
 }
 
 pub struct LmStudioLanguageModelProvider {
@@ -81,10 +83,10 @@ impl State {
             let mut models: Vec<lmstudio::Model> = models
                 .into_iter()
                 .filter(|model| model.r#type != ModelType::Embeddings)
-                .map(|model| lmstudio::Model::new(&model.id, None, None))
+                // .map(|model| lmstudio::Model::new(&model.id, None, None))
                 .collect();
 
-            models.sort_by(|a, b| a.name.cmp(&b.name));
+            models.sort_by(|a, b| a.id.cmp(&b.id));
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
@@ -169,34 +171,37 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: BTreeMap<String, lmstudio::Model> = BTreeMap::default();
+        // let mut models: BTreeMap<String, lmstudio::Model> = BTreeMap::default();
 
         // Add models from the LM Studio API
-        for model in self.state.read(cx).available_models.iter() {
-            models.insert(model.name.clone(), model.clone());
-        }
+        // for model in {
+        //     models.insert(model.id.clone(), model.clone());
+        // }
 
-        // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .lmstudio
-            .available_models
-            .iter()
-        {
-            models.insert(
-                model.name.clone(),
-                lmstudio::Model {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                },
-            );
-        }
+        // // Override with available models from settings
+        // for model in AllLanguageModelSettings::get_global(cx)
+        //     .lmstudio
+        //     .available_models
+        //     .iter()
+        // {
+        //     models.insert(
+        //         model.name.clone(),
+        //         lmstudio::Model {
+        //             name: model.name.clone(),
+        //             display_name: model.display_name.clone(),
+        //             max_tokens: model.max_tokens,
+        //         },
+        //     );
+        // }
+
+        let mut models = self.state.read(cx).available_models.clone();
+        models.sort_by(|model_a, model_b| model_a.state.cmp(&model_b.state));
 
         models
-            .into_values()
+            .into_iter()
             .map(|model| {
                 Arc::new(LmStudioLanguageModel {
-                    id: LanguageModelId::from(model.name.clone()),
+                    id: LanguageModelId::from(model.id.clone()),
                     model: model.clone(),
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
@@ -291,7 +296,7 @@ impl LmStudioLanguageModel {
         }
 
         ChatCompletionRequest {
-            model: self.model.name.clone(),
+            model: self.model.id.clone(),
             messages,
             stream: true,
             max_tokens: Some(-1),
