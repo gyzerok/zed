@@ -406,12 +406,14 @@ impl LanguageModel for LmStudioLanguageModel {
 
 struct LmStudioEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
+    thinking: bool,
 }
 
 impl LmStudioEventMapper {
     fn new() -> Self {
         Self {
             tool_calls_by_index: HashMap::default(),
+            thinking: false,
         }
     }
 
@@ -440,7 +442,29 @@ impl LmStudioEventMapper {
 
         let mut events = Vec::new();
         if let Some(content) = choice.delta.content.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            match content.as_str() {
+                "<think>" => {
+                    // If events is empty so far and we get a <think> tag, it means we are working with the thinking model
+                    // and can natively handle thinking process in the Agent panel.
+                    // Otherwise we are not going to handle this as it might be a genuine output from the model.
+                    if events.is_empty() {
+                        self.thinking = true
+                    }
+                }
+                "</think>" => self.thinking = false,
+                _ => {
+                    let completion_event = if self.thinking {
+                        LanguageModelCompletionEvent::Thinking {
+                            text: content,
+                            signature: None,
+                        }
+                    } else {
+                        LanguageModelCompletionEvent::Text(content)
+                    };
+
+                    events.push(Ok(completion_event))
+                }
+            }
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
