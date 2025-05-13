@@ -448,6 +448,14 @@ impl LmStudioEventMapper {
         };
 
         let mut events = Vec::new();
+
+        if let Some(reasoning_content) = choice.delta.reasoning_content.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: reasoning_content,
+                signature: None,
+            }))
+        }
+
         if let Some(content) = choice.delta.content.clone() {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
