@@ -482,6 +482,13 @@ impl LmStudioEventMapper {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
 
+        if let Some(reasoning_content) = choice.delta.reasoning_content {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: reasoning_content,
+                signature: None,
+            }))
+        }
+
         if let Some(tool_calls) = choice.delta.tool_calls {
             for tool_call in tool_calls {
                 let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
